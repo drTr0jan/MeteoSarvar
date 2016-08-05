@@ -8,6 +8,7 @@
 #include <netdb.h> 
 #include <netinet/in.h>
 #include <unistd.h>
+#include <time.h>
 #include "convert.h"
 #include "filename.h"
 
@@ -16,6 +17,11 @@
 #define	TCP_IP_END	4
 #define	TCP_IP_ACK	2
 #define	TCP_IP_RR	6
+
+#define EDNSG		1	/* dns general error */
+#define	EDNSO		2	/* dns other error */
+#define ECONG		3	/* connect general error */
+#define ECONO		4	/* connect other error */
 
 struct __attribute__((__packed__)) srvpkt {
   uint8_t typy;
@@ -30,10 +36,48 @@ struct __attribute__((__packed__)) srvpkt {
   uint8_t pad[3];
 };
 
+int serv_connect(int s, const char *hostname, unsigned short port)
+{
+  const struct addrinfo hint = {
+    .ai_flags = AI_NUMERICSERV,
+    .ai_family = AF_INET,
+    .ai_socktype = 0,
+    .ai_protocol = 0,
+    0,NULL, NULL, NULL
+  };
+  struct addrinfo *aip;
+  char servname[6];
+  int error;
+
+
+  sprintf(servname,"%u",port);
+  error = getaddrinfo(hostname,servname,&hint,&aip);
+  if ((error == EAI_AGAIN) || (error == EAI_NONAME))
+  {
+    printf("Error: %d\n",error);
+    return EDNSG;
+  }
+  if (error != 0)
+    return EDNSO;
+
+  if (connect(s, aip->ai_addr, aip->ai_addrlen) < 0)
+  {
+    if ((errno == ETIMEDOUT) ||
+        (errno == ECONNREFUSED) ||
+        (errno == ECONNRESET) || 
+        (errno == ENETUNREACH) || 
+        (errno == EHOSTUNREACH))
+      return ECONG;
+    else
+      return ECONO;
+  }
+  return 0;
+}
+
 int main(int argc, char *argv[])
 {
   iconv_t cd;
-  int sock, len, i;
+  int sock, len, i, quit, err;
   struct hostent *server;
   struct sockaddr_in serv_addr;
   const struct addrinfo hint = {
@@ -48,37 +92,46 @@ int main(int argc, char *argv[])
   char * msg;
   FILE *fp;
 
-  const char * port = "7251";
+  const unsigned short port = 7251;
   const char * hostname = "95.167.117.38";
+//  const char * hostname = "ya.ru";
 
   srandom(time(NULL));
   cd = iconv_open("CP1251","KOI8-R");
+// !!! Global error
   
   sock = socket(PF_INET, SOCK_STREAM, 0);
   if (sock < 0)
   {
+// !!! Global error
     printf("socket() failed: %d", errno);
     return EXIT_FAILURE;
   }
+// Main loop
   
-/*  server = gethostbyname(hostname);
-  if (server == NULL) 
-  {
-    printf("Host not found\n");
-    return EXIT_FAILURE;
-  }
-*/
-  if (getaddrinfo(hostname,port,&hint,&aip) != 0)
-  {
-    printf("Host not found\n");
-    return EXIT_FAILURE;
-  }
+// Connect statement
+/*    if (getaddrinfo(hostname,port,&hint,&aip) != 0)
+    {
+      printf("Host not found\n");
+      return EXIT_FAILURE;
+    }
 
   if (connect(sock, aip->ai_addr, aip->ai_addrlen) < 0) 
   {
     printf("connect() failed: %d", errno);
     return EXIT_FAILURE;
   }  
+*/
+
+  err = serv_connect(sock,hostname,port);
+  if (err != 0)
+  {
+    printf("connect() failed: %d %d\n", err, errno);
+    return EXIT_FAILURE;
+  }
+  else
+    printf("Hello\n");
+
 
   if (read(sock, spbuf, sizeof(*spbuf))>0)
   {
@@ -113,11 +166,13 @@ int main(int argc, char *argv[])
   }
   else
     printf("An receive error has been occured.\n");
+    
+
 //  close(sock);
-    iconv_close(cd);
+  iconv_close(cd);
 /*  if (argc < 5)
     printf("mts_comm: invalid arguments\n");
   else*/
-    printf("Test\n");
+//    printf("Test\n");
   return 0;
 }
