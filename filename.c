@@ -1,12 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-char * get_filename(void){
-  char * filename;
+void get_filename(char * filename)
+{
   const int i = 067777777;
   int r = random() % i + 010000000;
   sprintf(filename,"%o.00p",r);
-  return filename;
+  return;
 }
 
 /*int main(int argc, char *argv[])

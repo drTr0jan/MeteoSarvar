@@ -1,1 +1,1 @@
-char * get_filename(void);
+void get_filename(char * filename);
