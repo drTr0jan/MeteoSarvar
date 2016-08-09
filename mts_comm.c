@@ -141,9 +141,17 @@ int main(int argc, char *argv[])
         printf("Saving succes: %s\n", filename);
         read(sock, spbuf, sizeof(*spbuf));
         if (spbuf->typy == TCP_IP_END)
+        {
           printf("A packet has been captured successful.\n");
+// Acknowledgement
+          spbuf->typy = TCP_IP_ACK;
+          if ((write(sock, spbuf, sizeof(*spbuf))) > 0)
+            printf("ACK has been sent successful.\n");
+          else
+            printf("An send error has been occured. Error code is: %d\n",errno);
+        }
         else
-          printf("A capturing error has been occured.\n");
+          printf("A capturing error has been occured. The packet type is %d, but must be TCP_IP_END.\n",spbuf->typy);
       }
       else
         printf("The packet type is %d.\n",spbuf->typy);
