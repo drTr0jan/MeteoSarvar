@@ -24,7 +24,7 @@
 #define ECONG		4	/* connect general error */
 #define ECONO		5	/* connect other error */
 
-struct __attribute__((__packed__)) srvpkt {
+typedef struct __attribute__((__packed__)) {
   uint8_t typy;
   uint32_t ijp;
   uint8_t format;
@@ -35,9 +35,9 @@ struct __attribute__((__packed__)) srvpkt {
   char ahd[12];
   uint8_t pri;
   uint8_t pad[3];
-};
+} SRVPKT;
 
-int serv_connect(const char *hostname, unsigned short port)
+int serv_connect(const char *hostname, uint16_t port)
 {
   const struct addrinfo hint = {
     .ai_flags = AI_NUMERICSERV,
@@ -92,13 +92,6 @@ int serv_connect(const char *hostname, unsigned short port)
 int main(int argc, char *argv[])
 {
   iconv_t cd;
-  int sock, len, i, quit, err, j;
-  struct hostent *server;
-  struct sockaddr_in serv_addr;
-  struct srvpkt *spbuf;
-  char * msg;
-  char filename[13];
-  FILE *fp;
 
   const unsigned short port = 7251;
   const char * hostname = "95.167.117.38";
@@ -107,8 +100,12 @@ int main(int argc, char *argv[])
   cd = iconv_open("CP1251","KOI8-R");
 
   // Main loop
-  for (j = 0; j<2; j++)
-  {  
+  while (1)
+  {
+    int sock, readbytes;
+    SRVPKT *spbuf;
+
+
     // Connect statement
     if ((sock = serv_connect(hostname,port)) < 0)
     {
@@ -118,32 +115,47 @@ int main(int argc, char *argv[])
     }
 
     // Read section
-    while ((err = read(sock, spbuf, sizeof(*spbuf))) > 0)
+    spbuf = (SRVPKT *) malloc(sizeof(*spbuf));    
+    while ((readbytes = read(sock, spbuf, sizeof(*spbuf))) > 0)
     {
+
+      // If packet is TCP_IP_DATA
       if (spbuf->typy == TCP_IP_DATA)
       {
+        int len;
+        char filename[13];
+        FILE *fp;
+        char * msg;
+
         len = ntohs(spbuf->len);
-        printf("Length = %d\n",len);      
+        printf("Length = %d\n",len);
+        
+        // Receive the data
         msg = (char *) malloc(len);
         recv(sock, msg, len, MSG_WAITALL);
 //printf("Rec size: %d\n",ret);
 //      int ret = read(sock,tmpbuf,12);
 //      if (ret == -1)
 //        printf("An error %d occured.\n",errno);
-//      
+
+        // Convert the data
         convert_msg8(cd,&msg,len);
-        printf("Converting success\n");
+//        printf("Converting success\n");
+        
+        // Save the data
         get_filename(filename);
         fp = fopen(filename,"w");
         fwrite(msg,len,1,fp);
         fclose(fp);
         free(msg);
-        printf("Saving succes: %s\n", filename);
+        printf("Saving success: %s\n", filename);
+        
+        // Read end of packet
         read(sock, spbuf, sizeof(*spbuf));
+        // If correct
         if (spbuf->typy == TCP_IP_END)
         {
-          printf("A packet has been captured successful.\n");
-// Acknowledgement
+          // Sending an acknowledgement
           spbuf->typy = TCP_IP_ACK;
           if ((write(sock, spbuf, sizeof(*spbuf))) > 0)
             printf("ACK has been sent successful.\n");
@@ -153,6 +165,7 @@ int main(int argc, char *argv[])
         else
           printf("A capturing error has been occured. The packet type is %d, but must be TCP_IP_END.\n",spbuf->typy);
       }
+      // Print a packet type if not
       else
         printf("The packet type is %d.\n",spbuf->typy);
 /*    printf("Length = %d\n",ntohs(spbuf->len));
@@ -160,17 +173,17 @@ int main(int argc, char *argv[])
     printf("Header = %s\n",spbuf->ahd);
     printf("Priority = %d\n",spbuf->pri);*/
     }
+    free(spbuf);
 
-    
-    if (err == -1)
+    // If receiving problem
+    if (readbytes == -1)
       printf("An receive error has been occured. Error code is: %d\n",errno);
-    if (err == 0)
+    if (readbytes == 0)
       printf("An EOF has been gotten.\n");
     close(sock);
     sleep(5);
   }    
 
-//  close(sock);
   iconv_close(cd);
 /*  if (argc < 5)
     printf("mts_comm: invalid arguments\n");
