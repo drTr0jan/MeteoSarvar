@@ -1,3 +1,4 @@
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <iconv.h>
@@ -46,6 +47,7 @@ typedef struct __attribute__((__packed__)) {
 
 int sock;
 pthread_mutex_t rr_mutex;
+
 
 int serv_connect(const char *hostname, uint16_t port)
 {
@@ -126,38 +128,117 @@ void *rr_loop(void *arg)
   return((void *)0);
 }
 
+int init()
+{
+  return 0;
+}
+
+int usage()
+{
+  puts("usage: mts_connect [-br] -s host [-a host] -p channel [-w path]");
+  return 0;
+}
+
 int main(int argc, char *argv[])
 {
+  int opt;
+  _Bool fl_backup = 0;
+  _Bool fl_rr = 0;
+  char *hostname = NULL;
+  char *hostname_alt = NULL;
+  unsigned short port = 0;
+  char *work_dir = NULL;
   iconv_t cd;
-  char rr = 1;
+  char *msg_path, *bak_path;
 
-  const unsigned short port = 7251;
-  const char * hostname = "95.167.117.38";
+  if (argc < 2)
+  {
+    usage();
+    return EXIT_FAILURE;
+  }
+  while ((opt = getopt(argc, argv, "hbrs:a:p:w:")) != -1)
+  {
+    switch (opt)
+    {
+      case 'h':
+        usage();
+        return EXIT_SUCCESS;
+      case 'b':
+        fl_backup = 1;
+        break;
+      case 'r':
+        fl_rr = 1;
+        break;
+      case 's':
+        hostname = (char *) malloc(strlen(optarg)+1);
+        strcpy(hostname,optarg);
+        break;
+      case 'a':
+        hostname_alt = (char *) malloc(strlen(optarg)+1);
+        strcpy(hostname_alt,optarg);
+        break;
+      case 'p':
+        port = (unsigned short) atoi(optarg);
+        break;
+      case 'w':
+        work_dir = (char *) malloc(strlen(optarg)+1);
+        strcpy(work_dir,optarg);
+        break;
+      case '?':
+        return EXIT_FAILURE;
+    }
+  }
+
+  if (hostname == NULL || port == 0)
+  {
+    usage();
+    return EXIT_FAILURE;
+  }
+
+  if (work_dir == NULL)
+  {
+    work_dir = (char *) malloc(strlen(WORK_DIR)+1);
+    strcpy(work_dir,WORK_DIR);
+  }
+
+/*
+  printf("Argc: %d\n", argc);
+  printf("Optind: %d\n", optind);
+  printf("Server: %s\n",hostname);
+  if (hostname_alt != NULL)
+    printf("Alternate server: %s\n",hostname_alt);
+  printf("Port: %d\n", port);
+  printf("Workdir: %s\n", work_dir);
+  return EXIT_SUCCESS;
+*/
+
+//!!!
+  fl_rr = 1;
+//  const unsigned short port = 7251;
+//  const char * hostname = "95.167.117.38";
   
 //_POSIX_PATH_MAX
-  char msg_path[] = LINK_PATH "00000000.00p";
-  int msg_fname = strlen(msg_path) - 12;
+//  char msg_path[] = LINK_PATH "00000000.00p";
+//  int msg_fname = strlen(msg_path) - 12;
   
-#ifdef BCKP_PATH
-  char bak_path[] = BCKP_PATH "00000000.00p";
-  int bak_fname = strlen(bak_path) - 12;
-#endif
+//#ifdef BCKP_PATH
+//  char bak_path[] = BCKP_PATH "00000000.00p";
+//  int bak_fname = strlen(bak_path) - 12;
+//#endif
 
+// Init section
   srandom(time(NULL));
   umask(0);
-  chdir(WORK_DIR);
-
-/*  get_filename(&bak_path[bak_fname]);
-  printf("Hello: %s\n",bak_path);
-
-  exit(0);*/
-
+  chdir(work_dir);
   cd = iconv_open("CP1251","KOI8-R");
-  if (rr)
+  msg_path = (char *) malloc (strlen(LINK_PATH)+13);
+  if (fl_backup)
+    bak_path = (char *) malloc (strlen(BCKP_PATH)+13);
+  if (fl_rr)
     pthread_mutex_init(&rr_mutex, NULL);
 
   // Main loop
-  while (1)
+  while (0)
   {
     int readbytes;
     SRVPKT *spbuf;
@@ -172,7 +253,7 @@ int main(int argc, char *argv[])
     }
 
     // If RR is enabled start the RR loop
-    if(rr)
+    if(fl_rr)
       pthread_create(&tid, NULL, rr_loop, NULL);
 
     // Read section
@@ -185,12 +266,11 @@ int main(int argc, char *argv[])
       {
         int len;
         char filename[13];
-//        FILE *fp;
         char * msg;
 
         len = ntohs(spbuf->len);
         printf("Length = %d\n",len);
-        
+
         // Receive the data
         msg = (char *) malloc(len);
         recv(sock, msg, len, MSG_WAITALL);
@@ -205,28 +285,31 @@ int main(int argc, char *argv[])
         
         // Save the data
         get_filename(filename);
-        write_msg(filename,msg,len);
-/*        fp = fopen(filename,"w");
-        fwrite(msg,len,1,fp);
-        fclose(fp);*/
-        
+        sprintf(msg_path,LINK_PATH "%s",filename);
+        write_msg(msg_path,msg,len);
+        if (fl_backup)
+        {
+          sprintf(bak_path,BCKP_PATH "%s",filename);
+          write_msg(bak_path,msg,len);
+        }
+
         free(msg);
         printf("Saving success: %s\n", filename);
-        
-        // Read end of packet
+
+        // Read the end of packet
         read(sock, spbuf, sizeof(*spbuf));
         // If correct
         if (spbuf->typy == TCP_IP_END)
         {
           // Sending an acknowledgement
           spbuf->typy = TCP_IP_ACK;
-          if (rr)
+          if (fl_rr)
             pthread_mutex_lock(&rr_mutex);
           if ((write(sock, spbuf, sizeof(*spbuf))) > 0)
             printf("ACK has been sent successful.\n");
           else
             printf("An send error has been occured. Error code is: %d\n",errno);
-          if (rr)
+          if (fl_rr)
             pthread_mutex_unlock(&rr_mutex);
         }
         else
@@ -248,7 +331,7 @@ int main(int argc, char *argv[])
     if (readbytes == 0)
       printf("An EOF has been gotten.\n");
     
-    if (rr)
+    if (fl_rr)
       pthread_cancel(tid);
     sleep(1);
     close(sock);

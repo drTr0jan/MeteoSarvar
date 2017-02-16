@@ -1,10 +1,10 @@
 # Makefile for Meteo Sarvar
 
 mts_comm: mts_comm.o convert.o files.o
-	    clang -pthread -o mts_comm mts_comm.o convert.o files.o
+	    $(CC) -pthread -o mts_comm mts_comm.o convert.o files.o
 
 mts_comm.o: mts_comm.c
-	    clang -c mts_comm.c
+	    $(CC) -c mts_comm.c
 	    
 convert.o: convert.c
 	    clang -c convert.c
@@ -17,4 +17,4 @@ clean:
 
 test:
 	rm -f test
-	clang -pthread -o test test.c
+	$(CC) -pthread -o test test.c
