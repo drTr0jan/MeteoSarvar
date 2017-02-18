@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 
 void get_filename(char * filename)
 {
@@ -13,7 +14,10 @@ int write_msg(char * filename, char * msg, int len)
 {
   FILE *fp;
   int error = 0;
+
   fp = fopen(filename,"w");
+  if(fp == NULL)
+    error = -1;
   if(fwrite(msg,len,1,fp) == 0)
     error = -1;
   fclose(fp);

@@ -19,7 +19,7 @@
 
 #define WORK_DIR  "/var/db/meteo/"
 #define LINK_PATH "LINK/PRM_ASPD_S/"
-#define BCKP_PATH "backup/"
+#define BCKP_PATH "LINK/backup/"
 
 #define	TCP_IP_DATA	1
 #define	TCP_IP_DATA_Z	5
@@ -248,7 +248,7 @@ int main(int argc, char *argv[])
 */
 
 //!!!
-  fl_rr = 1;
+//  fl_rr = 1;
 //  const unsigned short port = 7251;
 //  const char * hostname = "95.167.117.38";
   
@@ -258,7 +258,7 @@ int main(int argc, char *argv[])
   chdir(work_dir);
   cd = iconv_open("CP1251","KOI8-R");
 
-  if (!fl_backup || (strlen(LINK_PATH) >= strlen (BCKP_PATH)))
+  if (!fl_backup || (strlen(LINK_PATH) >= strlen(BCKP_PATH)))
     msg_path = (char *) malloc (strlen(LINK_PATH)+13);
   else
     msg_path = (char *) malloc (strlen(BCKP_PATH)+13);
@@ -266,7 +266,7 @@ int main(int argc, char *argv[])
     pthread_mutex_init(&rr_mutex, NULL);
 
   // Main loop
-  while (0)
+  while (1)
   {
     int readbytes;
     SRVPKT *spbuf;
@@ -288,16 +288,20 @@ int main(int argc, char *argv[])
     spbuf = (SRVPKT *) malloc(sizeof(*spbuf));
     while ((readbytes = read(sock, spbuf, sizeof(*spbuf))) > 0)
     {
-
+      int pnum1, pnum2;
+      
       // If packet is TCP_IP_DATA
       if (spbuf->typy == TCP_IP_DATA)
       {
         int len;
         char filename[13];
+        char log_text[80];
         char * msg;
 
         len = ntohs(spbuf->len);
-        printf("Length = %d\n",len);
+        pnum1 = ntohs(spbuf->num);
+        sprintf(log_text,"Starting capture a DATA packet #%d (%d B)",pnum1,len);
+        log_message(log_text);
 
         // Receive the data
         msg = (char *) malloc(len);
@@ -310,38 +314,55 @@ int main(int argc, char *argv[])
         // Convert the data
         convert_msg8(cd,&msg,len);
 //        printf("Converting success\n");
-        
-        // Save the data
-        get_filename(filename);
-        sprintf(msg_path,LINK_PATH "%s",filename);
-        write_msg(msg_path,msg,len);
-        if (fl_backup)
-        {
-          sprintf(msg_path,BCKP_PATH "%s",filename);
-          write_msg(msg_path,msg,len);
-        }
 
-        free(msg);
-        printf("Saving success: %s\n", filename);
+
+
+//        printf("Saving success: %s\n", filename);
 
         // Read the end of packet
         read(sock, spbuf, sizeof(*spbuf));
+        
         // If correct
-        if (spbuf->typy == TCP_IP_END)
+        pnum2 = ntohs(spbuf->num);
+        if ((spbuf->typy == TCP_IP_END) && (pnum1 == pnum2))
         {
-          // Sending an acknowledgement
+          // Save the data
+          get_filename(filename);
+          sprintf(msg_path,LINK_PATH "%s",filename);
+          write_msg(msg_path,msg,len);
+          sprintf(log_text,"The DATA packet (%d) saved to %s.",pnum1,msg_path);
+          log_message(log_text);
+
+          if (fl_backup)
+          {
+            sprintf(msg_path,BCKP_PATH "%s",filename);
+            write_msg(msg_path,msg,len);
+            sprintf(log_text,"The DATA packet (%d) backsaved to %s.",pnum1,msg_path);
+            log_message(log_text);
+          }
+
+/*          // Sending an acknowledgement
           spbuf->typy = TCP_IP_ACK;
           if (fl_rr)
             pthread_mutex_lock(&rr_mutex);
           if ((write(sock, spbuf, sizeof(*spbuf))) > 0)
-            printf("ACK has been sent successful.\n");
+          {
+            sprintf(log_text,"ACK (%d) sended success.",pnum1);
+            log_message(log_text);
+          }
           else
             printf("An send error has been occured. Error code is: %d\n",errno);
           if (fl_rr)
             pthread_mutex_unlock(&rr_mutex);
+*/
         }
         else
-          printf("A capturing error has been occured. The packet type is %d, but must be TCP_IP_END.\n",spbuf->typy);
+        {
+          sprintf(log_text,"The capture of a DATA packet (%d) #%d/%d failed.",spbuf->typy,pnum1,pnum2);
+          log_message(log_text);
+         // printf("A capturing error has been occured. The packet type is %d, but must be TCP_IP_END.\n",spbuf->typy);
+        }
+        free(msg);
       }
       // Print a packet type if not
       else
