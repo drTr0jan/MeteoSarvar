@@ -1,7 +1,7 @@
 # Makefile for Meteo Sarvar
 
 mts_comm: mts_comm.o convert.o files.o
-	    $(CC) -pthread -o mts_comm mts_comm.o convert.o files.o
+	    $(CC) -lm -pthread -o mts_comm mts_comm.o convert.o files.o
 
 mts_comm.o: mts_comm.c
 	    $(CC) -c mts_comm.c
@@ -17,4 +17,4 @@ clean:
 
 test:
 	rm -f test
-	$(CC) -pthread -o test test.c
+	$(CC) -lm -o test test.c

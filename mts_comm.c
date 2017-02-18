@@ -1,4 +1,5 @@
 #include <getopt.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <iconv.h>
@@ -48,6 +49,40 @@ typedef struct __attribute__((__packed__)) {
 int sock;
 pthread_mutex_t rr_mutex;
 
+int get_time_msec(char *buf)
+{
+  int millisec;
+  long usec;
+  struct tm* tm_info;
+  struct timeval tv;
+
+  gettimeofday(&tv, NULL);
+
+  millisec = lrint(tv.tv_usec/1000.0);
+  if (millisec>=1000)
+  {
+    millisec -=1000;
+    tv.tv_sec++;
+  }
+
+  tm_info = localtime(&tv.tv_sec);
+
+  sprintf(buf, "%.2d:%.2d:%.2d.%03d", 
+	    tm_info->tm_hour, tm_info->tm_min,
+	    tm_info->tm_sec, millisec);
+
+  return 0;
+}
+
+int log_message(const char *msg)
+{
+  char curtime[13];
+  
+  get_time_msec(curtime);
+  printf("%s %s\n", curtime, msg);
+  
+  return 0;
+}
 
 int serv_connect(const char *hostname, uint16_t port)
 {
@@ -217,23 +252,16 @@ int main(int argc, char *argv[])
 //  const unsigned short port = 7251;
 //  const char * hostname = "95.167.117.38";
   
-//_POSIX_PATH_MAX
-//  char msg_path[] = LINK_PATH "00000000.00p";
-//  int msg_fname = strlen(msg_path) - 12;
-  
-//#ifdef BCKP_PATH
-//  char bak_path[] = BCKP_PATH "00000000.00p";
-//  int bak_fname = strlen(bak_path) - 12;
-//#endif
-
 // Init section
   srandom(time(NULL));
   umask(0);
   chdir(work_dir);
   cd = iconv_open("CP1251","KOI8-R");
-  msg_path = (char *) malloc (strlen(LINK_PATH)+13);
-  if (fl_backup)
-    bak_path = (char *) malloc (strlen(BCKP_PATH)+13);
+
+  if (!fl_backup || (strlen(LINK_PATH) >= strlen (BCKP_PATH)))
+    msg_path = (char *) malloc (strlen(LINK_PATH)+13);
+  else
+    msg_path = (char *) malloc (strlen(BCKP_PATH)+13);
   if (fl_rr)
     pthread_mutex_init(&rr_mutex, NULL);
 
@@ -289,8 +317,8 @@ int main(int argc, char *argv[])
         write_msg(msg_path,msg,len);
         if (fl_backup)
         {
-          sprintf(bak_path,BCKP_PATH "%s",filename);
-          write_msg(bak_path,msg,len);
+          sprintf(msg_path,BCKP_PATH "%s",filename);
+          write_msg(msg_path,msg,len);
         }
 
         free(msg);
