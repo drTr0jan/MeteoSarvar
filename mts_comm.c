@@ -14,7 +14,6 @@
 #include <unistd.h>
 #include <time.h>
 #include <limits.h>
-#include "convert.h"
 #include "files.h"
 
 #define WORK_DIR  "/var/db/meteo/"
@@ -149,29 +148,60 @@ void *rr_loop(void *arg)
     .pri = 2,
     {0,0,0}
   };
-  
+
   while (1)
   {
     sleep(60);
     pthread_mutex_lock(&rr_mutex);
     if((write(sock, &rrmsg, sizeof(rrmsg))) > 0)
-      printf("RR has been sent successful.\n");
+      log_message("RDY has been sent.");
     else
-      printf("RR error has been occured.\n");
+      log_message("RDY error has been occured while sent.");
     pthread_mutex_unlock(&rr_mutex);
   }
   return((void *)0);
 }
 
-int init()
-{
+int convert_msg8(char * msg, size_t len){
+  size_t plen = len;
+  size_t alen = len;
+  char *buf = alloca(len);
+  char *result = buf;
+  iconv_t cd = iconv_open("CP1251","KOI8-R");
+
+  iconv(cd,&msg,&plen,&buf,&alen);
+  strncpy(msg,result,len);
+
+  iconv_close(cd);
   return 0;
+}
+
+void get_filename(char * filename)
+{
+  const int i = 067777777;
+  int r = random() % i + 010000000;
+  sprintf(filename,"%o.00p",r);
+  return;
 }
 
 int usage()
 {
   puts("usage: mts_connect [-br] -s host [-a host] -p channel [-w path]");
   return 0;
+}
+
+int write_msg(char * filename, char * msg, int len)
+{
+  FILE *fp;
+  int error = 0;
+
+  fp = fopen(filename,"w");
+  if(fp == NULL)
+    error = -1;
+  if(fwrite(msg,len,1,fp) == 0)
+    error = -1;
+  fclose(fp);
+  return error;
 }
 
 int main(int argc, char *argv[])
@@ -256,7 +286,7 @@ int main(int argc, char *argv[])
   srandom(time(NULL));
   umask(0);
   chdir(work_dir);
-  cd = iconv_open("CP1251","KOI8-R");
+//  cd = iconv_open("CP1251","KOI8-R");
 
   if (!fl_backup || (strlen(LINK_PATH) >= strlen(BCKP_PATH)))
     msg_path = (char *) malloc (strlen(LINK_PATH)+13);
@@ -264,6 +294,7 @@ int main(int argc, char *argv[])
     msg_path = (char *) malloc (strlen(BCKP_PATH)+13);
   if (fl_rr)
     pthread_mutex_init(&rr_mutex, NULL);
+
 
   // Main loop
   while (1)
@@ -312,7 +343,7 @@ int main(int argc, char *argv[])
 //        printf("An error %d occured.\n",errno);
 
         // Convert the data
-        convert_msg8(cd,&msg,len);
+        convert_msg8(msg,len);
 //        printf("Converting success\n");
 
 
@@ -321,7 +352,7 @@ int main(int argc, char *argv[])
 
         // Read the end of packet
         read(sock, spbuf, sizeof(*spbuf));
-        
+
         // If correct
         pnum2 = ntohs(spbuf->num);
         if ((spbuf->typy == TCP_IP_END) && (pnum1 == pnum2))
@@ -330,18 +361,20 @@ int main(int argc, char *argv[])
           get_filename(filename);
           sprintf(msg_path,LINK_PATH "%s",filename);
           write_msg(msg_path,msg,len);
-          sprintf(log_text,"The DATA packet (%d) saved to %s.",pnum1,msg_path);
+          sprintf(log_text,"The DATA packet (%d: %s) saved to %s.",
+          		pnum1, spbuf->ahd, msg_path);
           log_message(log_text);
 
           if (fl_backup)
           {
             sprintf(msg_path,BCKP_PATH "%s",filename);
             write_msg(msg_path,msg,len);
-            sprintf(log_text,"The DATA packet (%d) backsaved to %s.",pnum1,msg_path);
+            sprintf(log_text,"The DATA packet (%d: %s) backsaved to %s.",
+            		pnum1, spbuf->ahd, msg_path);
             log_message(log_text);
           }
 
-/*          // Sending an acknowledgement
+          // Sending an acknowledgement
           spbuf->typy = TCP_IP_ACK;
           if (fl_rr)
             pthread_mutex_lock(&rr_mutex);
@@ -354,7 +387,6 @@ int main(int argc, char *argv[])
             printf("An send error has been occured. Error code is: %d\n",errno);
           if (fl_rr)
             pthread_mutex_unlock(&rr_mutex);
-*/
         }
         else
         {
@@ -365,8 +397,14 @@ int main(int argc, char *argv[])
         free(msg);
       }
       // Print a packet type if not
+      else if (spbuf->typy == TCP_IP_RR)
+      {
+        log_message("RDY packet has been received.");
+      }
       else
+      {
         printf("The packet type is %d.\n",spbuf->typy);
+      }
 /*    printf("Length = %d\n",ntohs(spbuf->len));
     printf("Number = %d\n",ntohs(spbuf->num));
     printf("Header = %s\n",spbuf->ahd);
@@ -387,10 +425,11 @@ int main(int argc, char *argv[])
     sleep(3);
   }    
 
-  iconv_close(cd);
+//  iconv_close(cd);
 /*  if (argc < 5)
     printf("mts_comm: invalid arguments\n");
   else*/
 //    printf("Test\n");
   return 0;
 }
+
