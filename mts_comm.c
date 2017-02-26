@@ -163,14 +163,15 @@ void *rr_loop(void *arg)
 }
 
 int convert_msg8(char * msg, size_t len){
-  size_t plen = len;
-  size_t alen = len;
-  char *buf = alloca(len);
-  char *result = buf;
+  size_t srcleft = len;
+  size_t dstleft;
+  char *buf = (char *)alloca(len);
+  char *dst = buf;
+  char *src = msg;
   iconv_t cd = iconv_open("CP1251","KOI8-R");
 
-  iconv(cd,&msg,&plen,&buf,&alen);
-  strncpy(msg,result,len);
+  iconv(cd,&src,&srcleft,&dst,&dstleft);
+  strncpy(msg,buf,len);
 
   iconv_close(cd);
   return 0;
