@@ -1,7 +1,10 @@
 #include <getopt.h>
 #include <math.h>
+#include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <syslog.h>
 #include <iconv.h>
 #include <errno.h>
 #include <pthread.h>
@@ -19,6 +22,10 @@
 #define WORK_DIR  "/var/db/meteo/"
 #define LINK_PATH "LINK/PRM_ASPD_S/"
 #define BCKP_PATH "LINK/backup/"
+
+#ifndef LOG_FACILITY
+#define LOG_FACILITY LOG_LOCAL0
+#endif
 
 #define	TCP_IP_DATA	1
 #define	TCP_IP_DATA_Z	5
@@ -47,6 +54,41 @@ typedef struct __attribute__((__packed__)) {
 
 int sock;
 pthread_mutex_t rr_mutex;
+_Bool fl_daemon = 0;
+
+int convert_msg8(char *, size_t);
+void get_filename(char *);
+int get_time_msec(char *);
+int log_message(int, const char *, ...);
+void *rr_loop(void *);
+int serv_connect(const char *, uint16_t);
+void sigterm(int);
+int usage(void);
+int write_msg(char *, char *, int);
+
+int convert_msg8(char * msg, size_t len)
+{
+  size_t srcleft = len;
+  size_t dstleft;
+  char *buf = (char *)alloca(len);
+  char *dst = buf;
+  char *src = msg;
+  iconv_t cd = iconv_open("CP1251","KOI8-R");
+
+  iconv(cd,&src,&srcleft,&dst,&dstleft);
+  strncpy(msg,buf,len);
+
+  iconv_close(cd);
+  return 0;
+}
+
+void get_filename(char * filename)
+{
+  const int i = 067777777;
+  int r = random() % i + 010000000;
+  sprintf(filename,"%o.00p",r);
+  return;
+}
 
 int get_time_msec(char *buf)
 {
@@ -73,14 +115,51 @@ int get_time_msec(char *buf)
   return 0;
 }
 
-int log_message(const char *msg)
+int log_message(int priority, const char *msg, ...)
 {
-  char curtime[13];
-  
-  get_time_msec(curtime);
-  printf("%s %s\n", curtime, msg);
-  
+  char log_message[80];
+  va_list ap;
+
+  va_start(ap, msg);
+  if (!fl_daemon)
+  {
+    char curtime[13];
+
+    get_time_msec(curtime);
+    vsprintf(log_message, msg, ap);
+    printf("%s %s\n", curtime, log_message);
+  }
+  else
+    vsyslog(priority, msg, ap);
+  va_end(ap);
+
+
   return 0;
+}
+
+void *rr_loop(void *arg)
+{
+  const SRVPKT rrmsg = {
+    .typy = TCP_IP_RR,
+    0,
+    0x03,0x8f,0x6a,
+    0,0,
+    "            ",
+    .pri = 2,
+    {0,0,0}
+  };
+
+  while (1)
+  {
+    sleep(60);
+    pthread_mutex_lock(&rr_mutex);
+    if((write(sock, &rrmsg, sizeof(rrmsg))) > 0)
+      log_message(LOG_INFO, "RDY has been sent.");
+    else
+      log_message(LOG_WARNING, "RDY error has been occured while sent.");
+    pthread_mutex_unlock(&rr_mutex);
+  }
+  return((void *)0);
 }
 
 int serv_connect(const char *hostname, uint16_t port)
@@ -136,58 +215,15 @@ int serv_connect(const char *hostname, uint16_t port)
   freeaddrinfo(aip);
   return sock;
 }
-
-void *rr_loop(void *arg)
+void sigterm(int signo)
 {
-  const SRVPKT rrmsg = {
-    .typy = TCP_IP_RR,
-    0,
-    0x03,0x8f,0x6a,
-    0,0,
-    "            ",
-    .pri = 2,
-    {0,0,0}
-  };
-
-  while (1)
-  {
-    sleep(60);
-    pthread_mutex_lock(&rr_mutex);
-    if((write(sock, &rrmsg, sizeof(rrmsg))) > 0)
-      log_message("RDY has been sent.");
-    else
-      log_message("RDY error has been occured while sent.");
-    pthread_mutex_unlock(&rr_mutex);
-  }
-  return((void *)0);
-}
-
-int convert_msg8(char * msg, size_t len){
-  size_t srcleft = len;
-  size_t dstleft;
-  char *buf = (char *)alloca(len);
-  char *dst = buf;
-  char *src = msg;
-  iconv_t cd = iconv_open("CP1251","KOI8-R");
-
-  iconv(cd,&src,&srcleft,&dst,&dstleft);
-  strncpy(msg,buf,len);
-
-  iconv_close(cd);
-  return 0;
-}
-
-void get_filename(char * filename)
-{
-  const int i = 067777777;
-  int r = random() % i + 010000000;
-  sprintf(filename,"%o.00p",r);
-  return;
+  puts("Exiting...");
+  exit(0);
 }
 
 int usage()
 {
-  puts("usage: mts_connect [-br] -s host [-a host] -p channel [-w path]");
+  puts("usage: mts_connect [-bdr] -s host [-a host] -p channel [-w path]");
   return 0;
 }
 
@@ -216,13 +252,14 @@ int main(int argc, char *argv[])
   char *work_dir = NULL;
   iconv_t cd;
   char *msg_path, *bak_path;
+  struct sigaction sa;
 
   if (argc < 2)
   {
     usage();
     return EXIT_FAILURE;
   }
-  while ((opt = getopt(argc, argv, "hbrs:a:p:w:")) != -1)
+  while ((opt = getopt(argc, argv, "hbdrs:a:p:w:")) != -1)
   {
     switch (opt)
     {
@@ -231,6 +268,9 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
       case 'b':
         fl_backup = 1;
+        break;
+      case 'd':
+        fl_daemon = 1;
         break;
       case 'r':
         fl_rr = 1;
@@ -267,35 +307,26 @@ int main(int argc, char *argv[])
     strcpy(work_dir,WORK_DIR);
   }
 
-/*
-  printf("Argc: %d\n", argc);
-  printf("Optind: %d\n", optind);
-  printf("Server: %s\n",hostname);
-  if (hostname_alt != NULL)
-    printf("Alternate server: %s\n",hostname_alt);
-  printf("Port: %d\n", port);
-  printf("Workdir: %s\n", work_dir);
-  return EXIT_SUCCESS;
-*/
-
-//!!!
-//  fl_rr = 1;
-//  const unsigned short port = 7251;
-//  const char * hostname = "95.167.117.38";
-  
 // Init section
   srandom(time(NULL));
   umask(0);
   chdir(work_dir);
-//  cd = iconv_open("CP1251","KOI8-R");
-
+  if (fl_daemon)
+    openlog("mts_comm",0,LOG_FACILITY);
   if (!fl_backup || (strlen(LINK_PATH) >= strlen(BCKP_PATH)))
     msg_path = (char *) malloc (strlen(LINK_PATH)+13);
   else
     msg_path = (char *) malloc (strlen(BCKP_PATH)+13);
   if (fl_rr)
     pthread_mutex_init(&rr_mutex, NULL);
-
+  sa.sa_handler = sigterm;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  if(sigaction(SIGTERM, &sa, NULL)<0)
+  {
+    puts("Signal error");
+    return EXIT_FAILURE;
+  }
 
   // Main loop
   while (1)
@@ -332,8 +363,8 @@ int main(int argc, char *argv[])
 
         len = ntohs(spbuf->len);
         pnum1 = ntohs(spbuf->num);
-        sprintf(log_text,"Starting capture a DATA packet #%d (%d B)",pnum1,len);
-        log_message(log_text);
+//        sprintf(log_text,"Starting capture a DATA packet #%d (%d B)",pnum1,len);
+        log_message(LOG_INFO, "Starting capture a DATA packet #%d (%d B)", pnum1, len);
 
         // Receive the data
         msg = (char *) malloc(len);
@@ -362,17 +393,19 @@ int main(int argc, char *argv[])
           get_filename(filename);
           sprintf(msg_path,LINK_PATH "%s",filename);
           write_msg(msg_path,msg,len);
-          sprintf(log_text,"The DATA packet (%d: %s) saved to %s.",
+//          sprintf(log_text,"The DATA packet (%d: %s) saved to %s.",
+//          		pnum1, spbuf->ahd, msg_path);
+          log_message(LOG_INFO, "The DATA packet (%d: %s) saved to %s.",
           		pnum1, spbuf->ahd, msg_path);
-          log_message(log_text);
 
           if (fl_backup)
           {
             sprintf(msg_path,BCKP_PATH "%s",filename);
             write_msg(msg_path,msg,len);
-            sprintf(log_text,"The DATA packet (%d: %s) backsaved to %s.",
+//            sprintf(log_text,"The DATA packet (%d: %s) backsaved to %s.",
+//            		pnum1, spbuf->ahd, msg_path);
+            log_message(LOG_DEBUG, "The DATA packet (%d: %s) backsaved to %s.",
             		pnum1, spbuf->ahd, msg_path);
-            log_message(log_text);
           }
 
           // Sending an acknowledgement
@@ -381,8 +414,8 @@ int main(int argc, char *argv[])
             pthread_mutex_lock(&rr_mutex);
           if ((write(sock, spbuf, sizeof(*spbuf))) > 0)
           {
-            sprintf(log_text,"ACK (%d) sended success.",pnum1);
-            log_message(log_text);
+//            sprintf(log_text,"ACK (%d) sended success.",pnum1);
+            log_message(LOG_INFO, "ACK (%d) sended success.", pnum1);
           }
           else
             printf("An send error has been occured. Error code is: %d\n",errno);
@@ -391,8 +424,8 @@ int main(int argc, char *argv[])
         }
         else
         {
-          sprintf(log_text,"The capture of a DATA packet (%d) #%d/%d failed.",spbuf->typy,pnum1,pnum2);
-          log_message(log_text);
+//          sprintf(log_text,"The capture of a DATA packet (%d) #%d/%d failed.",spbuf->typy,pnum1,pnum2);
+          log_message(LOG_ERR, "The capture of a DATA packet (%d) #%d/%d failed.", spbuf->typy, pnum1, pnum2);
          // printf("A capturing error has been occured. The packet type is %d, but must be TCP_IP_END.\n",spbuf->typy);
         }
         free(msg);
@@ -400,7 +433,7 @@ int main(int argc, char *argv[])
       // Print a packet type if not
       else if (spbuf->typy == TCP_IP_RR)
       {
-        log_message("RDY packet has been received.");
+        log_message(LOG_INFO, "RDY packet has been received.");
       }
       else
       {
@@ -415,22 +448,17 @@ int main(int argc, char *argv[])
 
     // If receiving problem
     if (readbytes == -1)
-      printf("An receive error has been occured. Error code is: %d\n",errno);
+      log_message(LOG_ERR,"An receive error has been occured. Error code is: %d\n",errno);
     if (readbytes == 0)
-      printf("An EOF has been gotten.\n");
-    
+      log_message(LOG_NOTICE, "An EOF has been gotten.\n");
+
     if (fl_rr)
       pthread_cancel(tid);
     sleep(1);
     close(sock);
     sleep(3);
-  }    
+  }
 
-//  iconv_close(cd);
-/*  if (argc < 5)
-    printf("mts_comm: invalid arguments\n");
-  else*/
-//    printf("Test\n");
   return 0;
 }
 
